@@ -7,8 +7,19 @@ import logging
 from glob import glob
 from shutil import copy2, move
 import time
+from git import Repo
+from git.exc import GitCommandError
+import argparse
 
 opsim_hostname = os.environ['OPSIM_HOSTNAME']
+parser = argparse.ArgumentParser(
+    description='Run batch proposal scheduler')
+parser.add_argument('--run-branches', '-bs', type=str, nargs='+',
+                    default=['master'],
+                    help='The branches to run')
+
+args = parser.parse_args()
+batchrun_branches = list(set(args.run_branches))
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -23,23 +34,17 @@ logger.addHandler(handler)
 logger.info('Start batch run on proposal scheduler')
 
 run_dir = get_path()
-unfinished_dir = os.path.abspath('unfinished_config')
-finished_dir = os.path.abspath('finished_config')
 config_dir = os.path.abspath('config_dir')
+repo_dir = os.path.dirname(os.path.realpath(__file__))
 
 if not os.path.exists(config_dir):
     os.makedirs(config_dir)
-if not os.path.exists(finished_dir):
-    os.makedirs(finished_dir)
 if not os.path.exists(run_dir):
     error_str = 'Path {} not found, please check your setup.py'.format(run_dir)
     logger.error(error_str)
     raise FileNotFoundError(error_str)
-if not os.path.exists(unfinished_dir):
-    error_str = 'Path {} not found, unfinished_dir should be given'
-    logger.error(error_str)
-    raise FileNotFoundError(error_str)
 
+repo = Repo(repo_dir)
 
 session_db = os.path.join(run_dir, 'output',
                           '{}_sessions.db'.format(opsim_hostname))
@@ -60,23 +65,21 @@ def get_latest_sessionid(plus_one=True):
     return '{}_{}'.format(out['sessionHost'][0], session_id)
 
 
-for config_directory in glob(os.path.join(unfinished_dir, '*')):
-    logger.info('Running with config: {}'.format(config_directory))
-    config_dir_name = config_directory.split('/')[-1]
+for branch in batchrun_branches:
+    logger.info('Running with branch: {}'.format(branch))
     next_session_id = get_latest_sessionid()
+    try:
+        repo.git.checkout(branch)
+    except GitCommandError:
+        logger.error('git branch {} not found, skip this branch'.format(branch))
+        continue
     logger.info('Running opsim with session ID: {}'.format(next_session_id))
-    for pyconfigs in glob(os.path.join(config_directory, '*.py')):
-        copy2(pyconfigs, config_dir)
     execute(['./run_opsim.sh {} {}'.format(run_dir, config_dir)])
     logger.info('Finish running {}'.format(next_session_id))
-    new_path_in_finished_config = os.path.join(finished_dir, '{}_{}'.format(
-        next_session_id, config_dir_name))
-    os.makedirs(new_path_in_finished_config)
-    for pyconfigs in glob(os.path.join(config_dir, '*.py')):
-        config_file_name = pyconfigs.split('/')[-1]
-        move(pyconfigs, os.path.join(
-            new_path_in_finished_config, config_file_name))
-    logger.info('Finish moving configs to new path in {}'.format(
-        new_path_in_finished_config))
-
+    new_branch_name = '{}_{}'.format(next_session_id, branch)
+    logger.info('Saving configs to new branch {}'.format(new_branch_name))
+    repo.git.checkout('-b', new_branch_name)
+    repo.git.checkout('master')
     time.sleep(1)
+
+logger.info('End simulation...')
