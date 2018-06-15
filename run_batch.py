@@ -80,6 +80,7 @@ for branch in batchrun_branches:
     logger.info('Saving configs to new branch {}'.format(new_branch_name))
     repo.git.checkout('-b', new_branch_name)
     repo.git.checkout('master')
+    repo.git.checkout('--', '.')
     time.sleep(1)
 
 logger.info('End simulation...')
